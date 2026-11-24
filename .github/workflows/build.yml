@@ -1,0 +1,38 @@
+name: Compiler Zappeur
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compiler l'appli
+        run: |
+          set -o pipefail
+          unzip -q -o Zappeur-pour-GitHub.zip -d src
+          cd src
+          xcodebuild -project Zappeur.xcodeproj -scheme Zappeur -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build 2>&1 | tee ../build.log
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/Zappeur.app Payload/
+          zip -qry ../Zappeur.ipa Payload
+      - name: Publier le fichier ipa
+        run: |
+          gh release delete derniere-version --yes --cleanup-tag || true
+          gh release create derniere-version Zappeur.ipa --title "Zappeur" --notes "A installer avec Sideloadly."
+      - name: Rapport pour Claude
+        if: always()
+        run: |
+          mkdir -p /tmp/r && cd /tmp/r
+          { xcodebuild -version; grep -q "BUILD SUCCEEDED" "$GITHUB_WORKSPACE/build.log" && echo "RESULTAT: SUCCES" || echo "RESULTAT: ECHEC"; grep -E "error:" "$GITHUB_WORKSPACE/build.log" | sort -u | head -120; tail -80 "$GITHUB_WORKSPACE/build.log"; } > rapport.txt 2>&1 || true
+          cp "$GITHUB_WORKSPACE/Zappeur.ipa" . 2>/dev/null || true
+          git init -q -b rapport && git add -A
+          git -c user.name=bot -c user.email=bot@users.noreply.github.com commit -qm "Rapport ${{ github.run_number }}"
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git" rapport
